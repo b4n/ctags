@@ -11,12 +11,6 @@
 #ifndef _READ_H
 #define _READ_H
 
-#if defined(FILE_WRITE) || defined(VAXC)
-# define CONST_FILE
-#else
-# define CONST_FILE const
-#endif
-
 /*
 *   INCLUDE FILES
 */
@@ -94,7 +88,8 @@ typedef struct sInputFile {
 /*
 *   GLOBAL VARIABLES
 */
-extern CONST_FILE inputFile File;
+/* should not be modified externally */
+extern inputFile File;
 
 /*
 *   FUNCTION PROTOTYPES
