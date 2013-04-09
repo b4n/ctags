@@ -103,6 +103,7 @@ typedef enum {
 	K_DEFINE,
 	K_FUNCTION,
 	K_INTERFACE,
+	K_LOCAL_VARIABLE,
 	K_VARIABLE,
 	COUNT_KIND
 } phpKind;
@@ -112,6 +113,7 @@ static kindOption PhpKinds[COUNT_KIND] = {
 	{ TRUE, 'd', "define",		"constant definitions" },
 	{ TRUE, 'f', "function",	"functions" },
 	{ TRUE, 'i', "interface",	"interfaces" },
+	{ FALSE, 'l', "local",		"local variables" },
 	{ TRUE, 'v', "variable",	"variables" }
 };
 
@@ -878,18 +880,21 @@ static boolean parseVariable (tokenInfo *const token)
 	boolean readNext = TRUE;
 	accessType access = CurrentStatement.access;
 
-	/* don't generate variable tags inside functions */
-	if (token->parentKind == K_FUNCTION)
-		return TRUE;
-
 	name = newToken ();
 	copyToken (name, token, TRUE);
 
 	readToken (token);
 	if (token->type == TOKEN_EQUAL_SIGN)
 	{
+		phpKind kind = K_VARIABLE;
+
+		if (token->parentKind == K_FUNCTION)
+			kind = K_LOCAL_VARIABLE;
+
 		readToken (token);
-		if (token->type == TOKEN_KEYWORD && token->keyword == KEYWORD_function)
+		if (token->type == TOKEN_KEYWORD &&
+			token->keyword == KEYWORD_function &&
+			PhpKinds[kind].enabled)
 		{
 			if (parseFunction (token, name))
 				readToken (token);
@@ -897,7 +902,7 @@ static boolean parseVariable (tokenInfo *const token)
 		}
 		else
 		{
-			makeSimplePhpTag (name, K_VARIABLE, access);
+			makeSimplePhpTag (name, kind, access);
 			readNext = FALSE;
 		}
 	}
