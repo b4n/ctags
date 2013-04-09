@@ -84,6 +84,19 @@ typedef enum {
 	KEYWORD_xor
 } keywordId;
 
+typedef enum {
+	ACCESS_UNDEFINED,
+	ACCESS_PRIVATE,
+	ACCESS_PROTECTED,
+	ACCESS_PUBLIC,
+	COUNT_ACCESS
+} accessType;
+
+typedef enum {
+	IMPL_UNDEFINED,
+	IMPL_ABSTRACT,
+	COUNT_IMPL
+} implType;
 
 typedef enum {
 	K_CLASS,
@@ -204,6 +217,12 @@ static langType Lang_php;
 
 static boolean InPhp = FALSE; /* whether we are between <? ?> */
 
+/* current statement details */
+struct {
+	accessType access;
+	implType impl;
+} CurrentStatement;
+
 
 static void buildPhpKeywordHash (void)
 {
@@ -216,7 +235,33 @@ static void buildPhpKeywordHash (void)
 	}
 }
 
-static void initPhpEntry (tagEntryInfo *e, const tokenInfo *const token, phpKind kind)
+static const char *accessToString (const accessType access)
+{
+	static const char *const names[COUNT_ACCESS] = {
+		"undefined",
+		"private",
+		"protected",
+		"public"
+	};
+
+	Assert (access < COUNT_ACCESS);
+
+	return names[access];
+}
+
+static const char *implToString (const implType impl)
+{
+	static const char *const names[COUNT_IMPL] = {
+		"undefined",
+		"abstract"
+	};
+
+	Assert (impl < COUNT_IMPL);
+
+	return names[impl];
+}
+
+static void initPhpEntry (tagEntryInfo *e, const tokenInfo *const token, phpKind kind, accessType access)
 {
 	initTagEntry (e, vStringValue (token->string));
 
@@ -225,6 +270,8 @@ static void initPhpEntry (tagEntryInfo *e, const tokenInfo *const token, phpKind
 	e->kindName		= PhpKinds[kind].name;
 	e->kind			= (char) PhpKinds[kind].letter;
 
+	if (access != ACCESS_UNDEFINED)
+		e->extensionFields.access = accessToString (access);
 	if (vStringLength(token->scope) > 0)
 	{
 		Assert (token->parentKind >= 0);
@@ -234,25 +281,43 @@ static void initPhpEntry (tagEntryInfo *e, const tokenInfo *const token, phpKind
 	}
 }
 
-static void makeSimplePhpTag (tokenInfo *const token, phpKind kind)
+static void makeSimplePhpTag (tokenInfo *const token, phpKind kind, accessType access)
 {
 	if (PhpKinds[kind].enabled)
 	{
 		tagEntryInfo e;
 
-		initPhpEntry (&e, token, kind);
+		initPhpEntry (&e, token, kind, access);
 		makeTagEntry (&e);
 	}
 }
 
-static void makeFunctionTag (tokenInfo *const token, vString *const arglist)
+static void makeClassTag (tokenInfo *const token, implType impl)
+{
+	if (PhpKinds[K_CLASS].enabled)
+	{
+		tagEntryInfo e;
+
+		initPhpEntry (&e, token, K_CLASS, ACCESS_UNDEFINED);
+
+		if (impl != IMPL_UNDEFINED)
+			e.extensionFields.implementation = implToString (impl);
+
+		makeTagEntry (&e);
+	}
+}
+
+static void makeFunctionTag (tokenInfo *const token, vString *const arglist,
+							 accessType access, implType impl)
 { 
 	if (PhpKinds[K_FUNCTION].enabled)
 	{
 		tagEntryInfo e;
 
-		initPhpEntry (&e, token, K_FUNCTION);
+		initPhpEntry (&e, token, K_FUNCTION, access);
 
+		if (impl != IMPL_UNDEFINED)
+			e.extensionFields.implementation = implToString (impl);
 		if (arglist)
 			e.extensionFields.signature = vStringValue (arglist);
 
@@ -597,6 +662,18 @@ getNextChar:
 			}
 			break;
 	}
+
+	if (token->type == TOKEN_SEMICOLON ||
+		token->type == TOKEN_OPEN_CURLY ||
+		token->type == TOKEN_CLOSE_CURLY)
+	{
+		/* reset current statement details on statement end, and when entering
+		 * a deeper scope.
+		 * it is a bit ugly to do this in readToken(), but it makes everything
+		 * a lot simpler. */
+		CurrentStatement.access = ACCESS_UNDEFINED;
+		CurrentStatement.impl = IMPL_UNDEFINED;
+	}
 }
 
 static void enterScope (tokenInfo *const token, vString *const scope, int parentKind);
@@ -604,6 +681,7 @@ static void enterScope (tokenInfo *const token, vString *const scope, int parent
 static boolean parseClass (tokenInfo *const token)
 {
 	boolean readNext = TRUE;
+	implType impl = CurrentStatement.impl;
 	tokenInfo *name;
 
 	readToken (token);
@@ -612,7 +690,7 @@ static boolean parseClass (tokenInfo *const token)
 
 	name = newToken ();
 	copyToken (name, token, TRUE);
-	makeSimplePhpTag (name, K_CLASS);
+	makeClassTag (name, impl);
 
 	/* skip over possible "extends FOO, BAR" */
 	do
@@ -635,6 +713,8 @@ static boolean parseClass (tokenInfo *const token)
 static boolean parseFunction (tokenInfo *const token)
 {
 	boolean readNext = TRUE;
+	accessType access = CurrentStatement.access;
+	implType impl = CurrentStatement.impl;
 	tokenInfo *name;
 
 	readToken (token);
@@ -667,7 +747,7 @@ static boolean parseFunction (tokenInfo *const token)
 		while (depth > 0 && c != EOF);
 		vStringTerminate (arglist);
 
-		makeFunctionTag (name, arglist);
+		makeFunctionTag (name, arglist, access, impl);
 		vStringDelete (arglist);
 
 		readToken (token); /* normally it's an open brace */
@@ -697,7 +777,7 @@ static boolean parseConstant (tokenInfo *const token)
 
 	readToken (token);
 	if (token->type == TOKEN_EQUAL_SIGN)
-		makeSimplePhpTag (name, K_DEFINE);
+		makeSimplePhpTag (name, K_DEFINE, ACCESS_UNDEFINED);
 
 	deleteToken (name);
 
@@ -719,7 +799,7 @@ static boolean parseDefine (tokenInfo *const token)
 	if (token->type == TOKEN_STRING ||
 		token->type == TOKEN_IDENTIFIER)
 	{
-		makeSimplePhpTag (token, K_DEFINE);
+		makeSimplePhpTag (token, K_DEFINE, ACCESS_UNDEFINED);
 		readToken (token);
 	}
 
@@ -748,8 +828,9 @@ static boolean parseDefine (tokenInfo *const token)
  * 	$var; */
 static boolean parseVariable (tokenInfo *const token)
 {
-	boolean readNext = TRUE;
 	tokenInfo *name;
+	boolean readNext = TRUE;
+	accessType access = CurrentStatement.access;
 
 	/* don't generate variable tags inside functions */
 	if (token->parentKind == K_FUNCTION)
@@ -760,7 +841,7 @@ static boolean parseVariable (tokenInfo *const token)
 
 	readToken (token);
 	if (token->type == TOKEN_EQUAL_SIGN || token->type == TOKEN_SEMICOLON)
-		makeSimplePhpTag (name, K_VARIABLE);
+		makeSimplePhpTag (name, K_VARIABLE, access);
 	else
 		readNext = FALSE;
 
@@ -801,6 +882,14 @@ static void enterScope (tokenInfo *const parentToken, vString *const extraScope,
 					case KEYWORD_function:	readNext = parseFunction (token);	break;
 					case KEYWORD_const:		readNext = parseConstant (token);	break;
 					case KEYWORD_define:	readNext = parseDefine (token);		break;
+
+					case KEYWORD_private:	CurrentStatement.access = ACCESS_PRIVATE;	break;
+					case KEYWORD_protected:	CurrentStatement.access = ACCESS_PROTECTED;	break;
+					case KEYWORD_public:	CurrentStatement.access = ACCESS_PUBLIC;	break;
+					case KEYWORD_var:		CurrentStatement.access = ACCESS_PUBLIC;	break;
+
+					case KEYWORD_abstract:	CurrentStatement.impl = IMPL_ABSTRACT;		break;
+
 					default: break;
 				}
 				break;
@@ -826,6 +915,9 @@ static void findPhpTags (void)
 	tokenInfo *const token = newToken ();
 
 	InPhp = FALSE;
+	CurrentStatement.access = ACCESS_UNDEFINED;
+	CurrentStatement.impl = IMPL_UNDEFINED;
+
 	do
 	{
 		enterScope (token, NULL, -1);
