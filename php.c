@@ -828,9 +828,20 @@ getNextChar:
 		}
 
 		case '$': /* variable start */
-			parseIdentifier (token->string, c);
-			token->type = TOKEN_VARIABLE;
+		{
+			int d = fileGetc ();
+			if (! isIdentChar (d))
+			{
+				fileUngetc (d);
+				token->type = TOKEN_UNDEFINED;
+			}
+			else
+			{
+				parseIdentifier (token->string, d);
+				token->type = TOKEN_VARIABLE;
+			}
 			break;
+		}
 
 		case '?': /* maybe the end of the PHP chunk */
 		{
@@ -1011,6 +1022,8 @@ static boolean parseFunction (tokenInfo *const token, const tokenInfo *name)
 							vStringPut (arglist, ' ');
 							break;
 					}
+					if (token->type == TOKEN_VARIABLE)
+						vStringPut (arglist, '$');
 					vStringCat (arglist, token->string);
 					break;
 				}
