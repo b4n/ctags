@@ -14,7 +14,7 @@
 #if defined(FILE_WRITE) || defined(VAXC)
 # define CONST_FILE
 #else
-# define CONST_FILE const
+# define CONST_FILE volatile const
 #endif
 
 /*
