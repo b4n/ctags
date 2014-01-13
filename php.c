@@ -1134,6 +1134,12 @@ static boolean parseFunction (tokenInfo *const token, const tokenInfo *name)
 				case TOKEN_PERIOD:			vStringPut (arglist, '.');		break;
 				case TOKEN_SEMICOLON:		vStringPut (arglist, ';');		break;
 				case TOKEN_STRING:			vStringCatS (arglist, "'...'");	break;
+				{
+					vStringCatS (arglist, "'");
+					vStringCat  (arglist, token->string);
+					vStringCatS (arglist, "'");
+					break;
+				}
 
 				case TOKEN_IDENTIFIER:
 				case TOKEN_KEYWORD:
