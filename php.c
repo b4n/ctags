@@ -22,6 +22,7 @@
 #include "routines.h"
 #include "debug.h"
 
+#include <string.h>
 
 #define SCOPE_SEPARATOR "::"
 
@@ -237,6 +238,7 @@ static boolean InPhp = FALSE; /* whether we are between <? ?> */
 struct {
 	accessType access;
 	implType impl;
+	vString* docblock;
 } CurrentStatement;
 
 /* Current namespace */
@@ -280,8 +282,32 @@ static const char *implToString (const implType impl)
 	return names[impl];
 }
 
+static void encodeDocBlock (vString *const encoded, vString const *docblock)
+{
+	int i, len;
+	char *buff, c;
+	buff = vStringValue (docblock);
+	len = strlen (buff);
+
+	vStringClear (encoded);
+
+	for (i = 0; i < len; ++i) {
+		c = buff[i];
+		if (c == '\n')
+			vStringCatS (encoded, "\\n");
+		else if (c == '\r')
+			vStringCatS (encoded, "\\r");
+		else if (c == '\t')
+			vStringCatS (encoded, "\\t");
+		else
+			vStringPut (encoded, c);
+
+	}
+	vStringTerminate (encoded);
+}
+
 static void initPhpEntry (tagEntryInfo *const e, const tokenInfo *const token,
-						  const phpKind kind, const accessType access)
+						  const phpKind kind, const accessType access, vString *const docblock)
 {
 	static vString *fullScope = NULL;
 	int parentKind = -1;
@@ -321,6 +347,10 @@ static void initPhpEntry (tagEntryInfo *const e, const tokenInfo *const token,
 		e->extensionFields.scope[0] = PhpKinds[parentKind].name;
 		e->extensionFields.scope[1] = vStringValue (fullScope);
 	}
+	if (vStringLength (docblock) > 0)
+	{
+		e->extensionFields.docblock = vStringValue (docblock);
+	}
 }
 
 static void makeSimplePhpTag (const tokenInfo *const token, const phpKind kind,
@@ -330,7 +360,7 @@ static void makeSimplePhpTag (const tokenInfo *const token, const phpKind kind,
 	{
 		tagEntryInfo e;
 
-		initPhpEntry (&e, token, kind, access);
+		initPhpEntry (&e, token, kind, access, CurrentStatement.docblock);
 		makeTagEntry (&e);
 	}
 }
@@ -359,7 +389,7 @@ static void makeClassOrIfaceTag (const phpKind kind, const tokenInfo *const toke
 	{
 		tagEntryInfo e;
 
-		initPhpEntry (&e, token, kind, ACCESS_UNDEFINED);
+		initPhpEntry (&e, token, kind, ACCESS_UNDEFINED, CurrentStatement.docblock);
 
 		if (impl != IMPL_UNDEFINED)
 			e.extensionFields.implementation = implToString (impl);
@@ -378,7 +408,7 @@ static void makeFunctionTag (const tokenInfo *const token,
 	{
 		tagEntryInfo e;
 
-		initPhpEntry (&e, token, K_FUNCTION, access);
+		initPhpEntry (&e, token, K_FUNCTION, access, CurrentStatement.docblock);
 
 		if (impl != IMPL_UNDEFINED)
 			e.extensionFields.implementation = implToString (impl);
@@ -511,6 +541,18 @@ static int skipToCharacter (const int c)
 	{
 		d = fileGetc ();
 	} while (d != EOF  &&  d != c);
+	return d;
+}
+
+static int collectToCharacter (vString *const string, const int c)
+{
+	int d;
+	do
+	{
+		d = fileGetc ();
+		vStringPut (string, (char) d);
+	} while (d != EOF  &&  d != c);
+	vStringTerminate (string);
 	return d;
 }
 
@@ -906,9 +948,24 @@ getNextChar:
 			}
 			else if (d == '*')
 			{
+				boolean isDocBlock = FALSE;
+				int d2 = fileGetc ();
+				vString *docblock = NULL;
+				if (d2 == '*') {
+					isDocBlock = TRUE;
+					docblock = vStringNew ();
+				}
+				else
+					fileUngetc (d2);
+
+
 				do
 				{
-					c = skipToCharacter ('*');
+					if (isDocBlock == FALSE)
+						c = skipToCharacter ('*');
+					else
+						c = collectToCharacter (docblock, '*');
+
 					if (c != EOF)
 					{
 						c = fileGetc ();
@@ -918,6 +975,18 @@ getNextChar:
 							fileUngetc (c);
 					}
 				} while (c != EOF && c != '\0');
+				if (isDocBlock) {
+					vString *encoded = vStringNew ();
+					encodeDocBlock (encoded, docblock);
+					vStringDelete (docblock);
+
+					vStringClear (CurrentStatement.docblock);
+					vStringCatS (CurrentStatement.docblock, "/**");
+					vStringCat  (CurrentStatement.docblock, encoded);
+					vStringCatS (CurrentStatement.docblock, "/");
+
+					vStringDelete (encoded);
+				}
 				goto getNextChar;
 			}
 			else
@@ -1393,24 +1462,49 @@ static void enterScope (tokenInfo *const parentToken,
 		{
 			case TOKEN_OPEN_CURLY:
 				enterScope (token, NULL, -1);
+				vStringClear (CurrentStatement.docblock);
 				break;
 
 			case TOKEN_KEYWORD:
 				switch (token->keyword)
 				{
-					case KEYWORD_class:		readNext = parseClassOrIface (token, K_CLASS);		break;
-					case KEYWORD_interface:	readNext = parseClassOrIface (token, K_INTERFACE);	break;
-					case KEYWORD_trait:		readNext = parseTrait (token);						break;
-					case KEYWORD_function:	readNext = parseFunction (token, NULL);				break;
-					case KEYWORD_const:		readNext = parseConstant (token);					break;
-					case KEYWORD_define:	readNext = parseDefine (token);						break;
+					case KEYWORD_class:
+						readNext = parseClassOrIface (token, K_CLASS);
+						vStringClear (CurrentStatement.docblock);
+						break;
+					case KEYWORD_interface:
+						readNext = parseClassOrIface (token, K_INTERFACE);
+						vStringClear (CurrentStatement.docblock);
+						break;
+					case KEYWORD_trait:
+						readNext = parseTrait (token);
+						vStringClear (CurrentStatement.docblock);
+						break;
+					case KEYWORD_function:
+						readNext = parseFunction (token, NULL);
+						vStringClear (CurrentStatement.docblock);
+						break;
+					case KEYWORD_const:
+						readNext = parseConstant (token);
+						vStringClear (CurrentStatement.docblock);
+						break;
+					case KEYWORD_define:
+						readNext = parseDefine (token);
+						vStringClear (CurrentStatement.docblock);
+						break;
 
-					case KEYWORD_namespace:	readNext = parseNamespace (token);	break;
+					case KEYWORD_namespace:
+						readNext = parseNamespace (token);
+						vStringClear (CurrentStatement.docblock);
+						break;
 
 					case KEYWORD_private:	CurrentStatement.access = ACCESS_PRIVATE;	break;
 					case KEYWORD_protected:	CurrentStatement.access = ACCESS_PROTECTED;	break;
 					case KEYWORD_public:	CurrentStatement.access = ACCESS_PUBLIC;	break;
-					case KEYWORD_var:		CurrentStatement.access = ACCESS_PUBLIC;	break;
+					case KEYWORD_var:
+						CurrentStatement.access = ACCESS_PUBLIC;
+						vStringClear (CurrentStatement.docblock);
+						break;
 
 					case KEYWORD_abstract:	CurrentStatement.impl = IMPL_ABSTRACT;		break;
 
@@ -1420,6 +1514,7 @@ static void enterScope (tokenInfo *const parentToken,
 
 			case TOKEN_VARIABLE:
 				readNext = parseVariable (token);
+				vStringClear (CurrentStatement.docblock);
 				break;
 
 			default: break;
@@ -1441,6 +1536,7 @@ static void findPhpTags (void)
 	InPhp = FALSE;
 	CurrentStatement.access = ACCESS_UNDEFINED;
 	CurrentStatement.impl = IMPL_UNDEFINED;
+	CurrentStatement.docblock = vStringNew ();
 	CurrentNamesapce = vStringNew ();
 
 	do
