@@ -761,6 +761,11 @@ static int addExtensionFields (const tagEntryInfo *const tag)
 		length += fprintf (TagFile.fp, "%s\tsignature:%s", sep,
 				tag->extensionFields.signature);
 
+	if (Option.extensionFields.docblock  &&
+			tag->extensionFields.docblock != NULL)
+		length += fprintf (TagFile.fp, "%s\tdocblock:%s", sep,
+				tag->extensionFields.docblock);
+
 	return length;
 #undef sep
 }

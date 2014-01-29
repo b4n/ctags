@@ -78,6 +78,7 @@ struct sExtFields {  /* extension field content control */
 	boolean scope;
 	boolean signature;
 	boolean typeRef;
+	boolean docblock;
 };
 
 /*  This stores the command line options.
