@@ -403,7 +403,7 @@ static void makeClassOrIfaceTag (const phpKind kind, const tokenInfo *const toke
 static void makeFunctionTag (const tokenInfo *const token,
 							 const vString *const arglist,
 							 const accessType access, const implType impl)
-{ 
+{
 	if (PhpKinds[K_FUNCTION].enabled)
 	{
 		tagEntryInfo e;
@@ -715,7 +715,7 @@ static int skipWhitespaces (int c)
 }
 
 /* <script[:white:]+language[:white:]*=[:white:]*(php|'php'|"php")[:white:]*>
- * 
+ *
  * This is ugly, but the whole "<script language=php>" tag is and we can't
  * really do better without adding a lot of code only for this */
 static boolean isOpenScriptLanguagePhp (int c)
@@ -1202,7 +1202,7 @@ static boolean parseFunction (tokenInfo *const token, const tokenInfo *name)
 				case TOKEN_OPEN_SQUARE:		vStringPut (arglist, '[');		break;
 				case TOKEN_PERIOD:			vStringPut (arglist, '.');		break;
 				case TOKEN_SEMICOLON:		vStringPut (arglist, ';');		break;
-				case TOKEN_STRING:			vStringCatS (arglist, "'...'");	break;
+				case TOKEN_STRING:
 				{
 					vStringCatS (arglist, "'");
 					vStringCat  (arglist, token->string);
